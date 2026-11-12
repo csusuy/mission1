@@ -408,50 +408,75 @@ github.com
 
 ## 5. 🌟 보너스 과제 완수 및 심화 검증
 
+### 5.1 Docker Compose 기초
+> **배움 포인트**: 컨테이너 실행 명령(CLI)이 **“문서화된 실행 설정(IaC)”**으로 바뀌는 이유
 
-### 5.5 GitHub SSH 키 설정 및 보안 인증 파이프라인
-> **배움 포인트**: 비밀번호/토큰 기반 인증 vs **비대칭키(공개키/개인키) 암호화** 인증의 차이와 보안성
+- 복잡한 `docker run -d -p 8080:80 -v ... --network ...` 명령어는 타이핑 실수가 발생하기 쉽고 팀원 간 공유가 어렵습니다.
+- Docker Compose는 선언적 YAML 파일로 서비스 포트, 볼륨, 환경변수, 의존성을 문서화하여 **Git으로 버전 관리**할 수 있게 하며, `docker compose up` 단 한 줄로 어디서나 동일한 환경을 100% 재현할 수 있습니다.
 
-- **HTTPS Token**: 유효기간 만료 시 재발급이 필요하며, 토큰 유출 시 계정 탈취 위험이 큽니다.
-- **SSH (Ed25519)**: 타원곡선 암호학 기반으로 개인키(`id_ed25519`)는 호스트 머신에만 안전하게 보관되고, 공개키(`id_ed25519.pub`)만 GitHub에 등록되어 비밀번호 노출 없이 안전하고 영구적인 CLI 푸시가 가능합니다.
+---
 
-#### 1) SSH 키 쌍 생성 (Ed25519)
-```bash
-$ ssh-keygen -t ed25519 -C "wp03160@naver.com" -f ~/.ssh/id_ed25519 -N ""
-Generating public/private ed25519 key pair.
-Your identification has been saved in /home/developer/.ssh/id_ed25519
-Your public key has been saved in /home/developer/.ssh/id_ed25519.pub
-The key fingerprint is:
-SHA256:jg3gKztopS1Cs+RXzoXfrV8S42H5xNtyeo6rdF5I8xc wp03160@naver.com
+### 5.2 Docker Compose 멀티 컨테이너 & 서비스 디스커버리
+> **배움 포인트**: 컨테이너 간 가상 네트워크 분리 및 내장 DNS(Service Discovery) 메커니즘
+
+본 프로젝트는 커스텀 웹 서버(`web`)와 인메모리 캐시 서버(`cache`: Redis)를 동일한 사용자 정의 브릿지 네트워크(`workstation-net`)로 연결하였습니다.
+
+#### `docker-compose.yml`
+```yaml
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codyssey-workstation-web
+    image: codyssey-web:latest
+    ports:
+      - "${HOST_PORT:-8080}:80"
+      - "${HOST_PORT_SECONDARY:-8081}:80"
+    environment:
+      - APP_ENV=${APP_ENV:-production}
+      - REDIS_HOST=cache
+    volumes:
+      - ./src:/usr/share/nginx/html:ro
+      - workstation-data:/data
+    networks:
+      - workstation-net
+    restart: unless-stopped
+    depends_on:
+      - cache
+
+  cache:
+    image: redis:alpine
+    container_name: codyssey-workstation-cache
+    ports:
+      - "${CACHE_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - workstation-net
+    restart: unless-stopped
+
+networks:
+  workstation-net:
+    driver: bridge
+
+volumes:
+  workstation-data:
+    name: codyssey-workstation-volume
+  redis-data:
 ```
 
-#### 2) `~/.ssh/config` 최적화
-```text
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/id_ed25519
-  IdentitiesOnly yes
-```
+#### 컨테이너 간 네트워크 통신 검증 로그
+Docker의 내장 DNS 서버(`127.0.0.11`)가 서비스 이름(`cache`)을 해당 컨테이너의 가상 IP(`172.x.x.x`)로 자동 변환하여 통신이 이루어집니다.
 
-#### 3) GitHub 연결 테스트
 ```bash
-$ ssh -T git@github.com -o StrictHostKeyChecking=accept-new
-Hi csusuy! You've successfully authenticated, but GitHub does not provide shell access.
-```
-
-#### 4) Git 원격 저장소 URL을 SSH로 전환 후 푸시 검증
-```bash
-$ git remote set-url origin git@github.com:csusuy/e1-1-workstation.git
-$ git remote -v
-origin  git@github.com:csusuy/e1-1-workstation.git (fetch)
-origin  git@github.com:csusuy/e1-1-workstation.git (push)
-
-$ git push origin main
-Everything up-to-date
+# web 컨테이너 내부에서 서비스 이름 'cache'로 6379 포트 소켓 연결 테스트
+$ docker compose exec web nc -z -v -w 2 cache 6379
+cache (172.20.0.2:6379) open
 ```
 
 ---
+
 
 ## 6. 트러블슈팅 사례
 
